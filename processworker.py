@@ -6,12 +6,16 @@ listen = ['default']
 
 rdb = redis.Redis()
 
-q = Queue(connection=rdb, is_async=True)
+rant_queue = Queue("rants", connection=rdb, is_async=True)
+comment_queue = Queue("comments", connection=rdb, is_async=True)
+new_queue = Queue("new", connection=rdb, is_async=True)
+standard_queue = Queue("standard", connection=rdb)
 
 is_async_fetch_all = False
 is_async_check_rant = False
 is_async_process_comments = False
 is_async_fetch_comments = False
+is_async_fetch_content = False
 
 api_base_path = "https://devrant.com/api"
 
@@ -28,6 +32,22 @@ profile_fields_no_rfetch = [
     {"name": "upvoted", "ppf": "process_rant", "args": [False, True, False, False, False]},
     {"name": "favorites", "ppf": "process_rant", "args": [False, True, False, False, False]}
 ]
+
+fn_queues = {
+    "process_rant":rant_queue,
+    "process_comment":comment_queue,
+    "process_comments_from_rant": comment_queue,
+    "fetch_all_from": new_queue,
+    "create_user_content": new_queue,
+    "create_user": new_queue,
+    "process_profile": standard_queue,
+}
+
+def get_queue(f):
+    if f not in fn_queues:
+        return standard_queue
+    return fn_queues[f]
+
 
 def wait_for_api_rate_limit():
     maxreq = rdb.get("maxreq")
@@ -52,12 +72,15 @@ def get_request(subpath, parameters, postprocess_with=None, postprocess_args=[])
     c = True
     fails = 0
 
+    q = None
+
     if postprocess_with is not None:
         if postprocess_with not in globals():
             print("Can't find postprocess_with local function.")
             print("globals: " + str(globals()))
             return
 
+        q = get_queue(postprocess_with)
         postprocess_function = globals()[postprocess_with]
 
     while fails < 4:
@@ -76,6 +99,7 @@ def get_request(subpath, parameters, postprocess_with=None, postprocess_args=[])
             return rj
         break
 
+
 def fetch_all_from(subpath, parameters, postprocess_with, skip=0, encapsulators=[], postprocess_args=[]):
     print("fetching all from subpath: %s, params=%s" % (subpath, str(parameters)))
     url = api_base_path + subpath
@@ -86,6 +110,8 @@ def fetch_all_from(subpath, parameters, postprocess_with, skip=0, encapsulators=
         print("Can't find postprocess_with local function.")
         print("globals: " + str(globals()))
         return
+
+    q = get_queue(postprocess_with)
 
     postprocess_function = globals()[postprocess_with]
 
@@ -126,11 +152,11 @@ def create_user_content(user_id, fetch_profile=True, fetch_content=True, profile
     subpath = "/users/%d" % user_id
 
     if fetch_profile:
-        q.enqueue(get_request, subpath, {"app": 3}, "process_profile", [user_id, False])
+        new_queue.enqueue(get_request, subpath, {"app": 3}, "process_profile", [user_id, False])
 
     if fetch_content:
         for f in profile_flds:
-            q.enqueue(fetch_all_from, subpath, {
+            new_queue.enqueue(fetch_all_from, subpath, {
                 "app": 3,
                 "content": f["name"]
             }, f["ppf"], 0, ["profile", "content", "content"] + [f["name"]], f["args"])
@@ -249,7 +275,7 @@ def process_comment(comment, check_user=True, check_rant=True, update_if_exists=
     if check_rant and \
             con.execute(select([func.count(tbl_rants.c.rant_id)]).where(tbl_rants.c.rant_id == rant_id)).scalar() == 0:
         if is_async_check_rant:
-            q.enqueue(get_request, "/devrant/rants/%d" % rant_id, {"app": 3}, "process_comments_from_rant", [True])
+            rant_queue.enqueue(get_request, "/devrant/rants/%d" % rant_id, {"app": 3}, "process_comments_from_rant", [True])
         else:
             process_comments_from_rant(get_request("/devrant/rants/%d" % rant_id, {"app": 3}), True)
 
@@ -279,13 +305,13 @@ def process_comments_from_rant(rant, process_rant_aswell=False,*args):
         return
     if process_rant_aswell:
         if is_async_check_rant:
-            q.enqueue(process_rant, rant["rant"], True, False, False, False, False)
+            rant_queue.enqueue(process_rant, rant["rant"], True, False, False, False, False)
         else:
             process_rant(rant["rant"], check_user=True, fetch_comments=False, fetch_profile=False, fetch_content=False)
     comments = rant["comments"]
     for c in comments:
         if is_async_process_comments:
-            q.enqueue(process_comment, c, True, False)
+            comment_queue.enqueue(process_comment, c, True, False)
         else:
             process_comment(c, True, False)
 
@@ -357,6 +383,6 @@ def process_rant(rant, check_user=True, fetch_comments=True, update_if_exists=Fa
     ))
     if fetch_comments:
         if is_async_fetch_comments:
-            q.enqueue(get_request, "/devrant/rants/%d" % rant_id, {"app": 3}, "process_comments_from_rant", [])
+            comment_queue.enqueue(get_request, "/devrant/rants/%d" % rant_id, {"app": 3}, "process_comments_from_rant", [])
         else:
             process_comments_from_rant(get_request("/devrant/rants/%d" % rant_id, {"app": 3}))

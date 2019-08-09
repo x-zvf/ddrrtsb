@@ -6,12 +6,10 @@ from processworker import *
 
 rdb = redis.Redis()
 
-q = Queue(connection=rdb, is_async=True)
-
 
 @click.command()
 def fetch_recent_rants():
-    q.enqueue(fetch_all_from, "/devrant/rants", {
+    new_queue.enqueue(fetch_all_from, "/devrant/rants", {
         "app": 3,
         "sort": "recent",
         "limit": 20
@@ -20,7 +18,7 @@ def fetch_recent_rants():
 
 @click.command()
 def fetch_top_rants():
-    q.enqueue(fetch_all_from, "/devrant/rants", {
+    new_queue.enqueue(fetch_all_from, "/devrant/rants", {
         "app": 3,
         "sort": "top",
         "range": "all",
@@ -28,28 +26,36 @@ def fetch_top_rants():
     }, "process_rant", 0, ["rants"], [True, False, False, False, False])
 
 
+nj = lambda : rdb.llen("rq:queue:standard") + rdb.llen("rq:queue:comments") +rdb.llen("rq:queue:rants") +rdb.llen("rq:queue:new")
+
 @click.command()
 def fetch_user_profiles():
     print("fetching started.")
     while True:
         i = 0
-        njobs = len(q.jobs)
-        while njobs > 15:
+        njobs = nj()
+        while njobs > 0:
             print("waiting for queue [%d] to be smaller [%d]" % (njobs, i))
             i+=1
             time.sleep(2)
-            njobs = len(q.jobs)
+            njobs = nj()
 
-        u = con.execute(select([tbl_users.c.user_id]).where(
-            ~ exists().where(tbl_users_checked.c.user_id == tbl_users.c.user_id))).fetchone()
+        u = con.execute(select([tbl_users.c.user_id]).where(and_(tbl_users.c.score == None, tbl_users.c.username != "/--FETCHING--/"))).fetchone()
+
+        user_id = u[0]
+        con.execute(
+        tbl_users.update()
+            .values(
+                username="/--FETCHING--/",
+            ).where(tbl_users.c.user_id == user_id))
 
         if u is () or u is None:
             break
-        user_id = u[0]
-        print("enqueueing user id %d" % user_id)
-        q.enqueue(create_user_content, user_id, True, True, profile_fields_no_rfetch)
 
-        con.execute(tbl_users_checked.insert().values(user_id=user_id, at_time=int(time.time())))
+        print("enqueueing user id %d" % user_id)
+        new_queue.enqueue(create_user_content, user_id, True, True, profile_fields_no_rfetch)
+        time.sleep(1)
+        #con.execute(tbl_users_checked.insert().values(user_id=user_id, at_time=int(time.time())))
 
 @click.group()
 def cli():
