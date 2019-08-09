@@ -1,0 +1,19 @@
+version: '3'
+services:
+    postgres-db:
+        image: postgres
+        volumes:
+            - ./postgres/data:/data
+        ports:
+            - 5432:5432
+        environment:
+            POSTGRES_PASSWORD: "ddrrtsb"
+            POSTGRES_USER: "ddrrtsb"
+            POSTGRES_DB: "drdata"
+            PGDATA: /data
+
+    redis-db:
+        image: redis
+        ports:
+            - "6379:6379"
+
