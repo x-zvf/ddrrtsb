@@ -33,20 +33,20 @@ def fetch_user_profiles():
     print("fetching started.")
     while True:
         i = 0
-        njobs = nj()
-        while njobs > 0:
+        njobs = 2
+        while njobs > 1:
             print("waiting for queue [%d] to be smaller [%d]" % (njobs, i))
             i+=1
-            time.sleep(2)
+            time.sleep(0.25)
             njobs = nj()
 
-        u = con.execute(select([tbl_users.c.user_id]).where(and_(tbl_users.c.score == None, tbl_users.c.username != "/--FETCHING--/"))).fetchone()
+        u = con.execute(select([tbl_users.c.user_id]).where(and_(tbl_users.c.score == None, tbl_users.c.username != "/--DELETED--/"))).fetchone()
 
         user_id = u[0]
         con.execute(
         tbl_users.update()
             .values(
-                username="/--FETCHING--/",
+                username="/--FETCHING3--/",
             ).where(tbl_users.c.user_id == user_id))
 
         if u is () or u is None:
@@ -54,8 +54,11 @@ def fetch_user_profiles():
 
         print("enqueueing user id %d" % user_id)
         new_queue.enqueue(create_user_content, user_id, True, True, profile_fields_no_rfetch)
-        time.sleep(1)
-        #con.execute(tbl_users_checked.insert().values(user_id=user_id, at_time=int(time.time())))
+
+
+@click.command()
+def update_data():
+    pass
 
 @click.group()
 def cli():

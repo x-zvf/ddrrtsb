@@ -1,5 +1,6 @@
 from sqlalchemy import *
 from sqlalchemy.engine import Engine
+import enum
 
 
 def connect(user, password, db, host='localhost', port=5432):
@@ -73,10 +74,17 @@ tbl_comments = \
           Column("last_fetched", Integer)
           )
 
-tbl_users_checked = \
-    Table("users_checked", meta,
-          Column("user_id", Integer, primary_key=True),
-          Column("at_time", Integer)
-    )
+
+class HistEntryType(enum.Enum):
+    user_score = 0
+    rant_score = 1
+    comment_score = 2
+
+
+tbl_history = \
+    Table("history", meta,
+          Column("hist_id", Integer, primary_key=True, autoincrement=True),
+          Column("Type", Enum(HistEntryType), nullable=False)
+          )
 
 meta.create_all(con)
